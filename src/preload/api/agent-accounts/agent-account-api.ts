@@ -6,6 +6,7 @@ import type {
   CodexRateLimitAccountsState
 } from '../../../shared/agent-accounts/managed-account-types'
 import type { ClaudeHostSelectionChange } from '../../../shared/agent-accounts/claude/claude-pane-account-folder'
+import type { AntigravityAccountSelectionChange } from '../../../shared/agent-accounts/antigravity/antigravity-account-types'
 import type { CodexConfigSyncStatus } from '../../../shared/agent-accounts/codex/codex-config-sync-types'
 import type {
   CursorAccountStatus,
@@ -85,6 +86,11 @@ export type ClaudeAccountsApi = {
   onSelectedElsewhere?: (callback: (change: ClaudeAccountSelectionChange) => void) => () => void
   /** Desktop only: the automatic login rotation between this host's account folders. */
   rotationStatus?: () => Promise<ClaudeAccountRotationStatus>
+}
+
+export type AntigravityAccountsApi = {
+  /** A CLI or another client switched agy's login on this desktop's host. */
+  onSelectedElsewhere: (callback: (change: AntigravityAccountSelectionChange) => void) => () => void
 }
 
 export type GrokAccountsApi = {

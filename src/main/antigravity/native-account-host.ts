@@ -1,14 +1,21 @@
 import { join } from 'node:path'
 import { getAppEnvironment } from '../../shared/app-lifecycle/app-environment'
 import type { AntigravityAccountTarget } from '../../shared/agent-accounts/antigravity/antigravity-account-types'
-import { createEncryptedAntigravityAccountStore } from './native-account-store'
+import {
+  createEncryptedAntigravityAccountStore,
+  type AntigravityAccountStore
+} from './native-account-store'
+import { AGY_HOST_SELECTION } from './agy-account-selection'
+import { credentialFileExists } from '../credentials/credential-file-io'
 import { createAntigravityHostCredentialBackend } from './native-credential-backend'
 import { createAntigravityWslCredentialBackend } from './native-wsl-credentials'
 import { resolveWslDefaultDistro } from '../wsl/discovery/wsl-default-distro'
 import {
   AntigravityAccountService,
-  type AntigravityCredentialBackend
+  type AntigravityCredentialBackend,
+  type AntigravityLaunchRestore
 } from './native-account-service'
+import { antigravitySignInHoldsNativeLogin } from './antigravity-chat-sign-in'
 
 let service: AntigravityAccountService | null = null
 const wslServices = new Map<string, AntigravityAccountService>()
@@ -21,12 +28,45 @@ export function getAntigravityAccountVaultPath(wslDistro?: string): string {
     : join(root, 'vault')
 }
 
-function createService(backend: AntigravityCredentialBackend, vaultPath: string) {
+function createService(
+  backend: AntigravityCredentialBackend,
+  vaultPath: string,
+  host?: { launchRestore?: AntigravityLaunchRestore }
+) {
+  const store = createEncryptedAntigravityAccountStore(vaultPath, backend.parse)
+  const launchRestore = host?.launchRestore
   return new AntigravityAccountService(
-    createEncryptedAntigravityAccountStore(vaultPath, backend.parse),
-    backend
+    // The host's chats launch on its selected account, so every read and write of it is noted.
+    host ? notingSelection(store) : store,
+    backend,
+    undefined,
+    undefined,
+    launchRestore
   )
 }
+
+function notingSelection(store: AntigravityAccountStore): AntigravityAccountStore {
+  return {
+    read: async () => {
+      const vault = await store.read()
+      AGY_HOST_SELECTION.note(vault)
+      return vault
+    },
+    write: async (vault) => {
+      await store.write(vault)
+      AGY_HOST_SELECTION.note(vault)
+    }
+  }
+}
+
+// A chat start reads the selection before any account work did.
+AGY_HOST_SELECTION.readWith(async () => {
+  if (await credentialFileExists(getAntigravityAccountVaultPath())) {
+    await (await getAntigravityAccountService({ runtime: 'host' })).readSelection()
+  } else {
+    AGY_HOST_SELECTION.note({ selectedAccountId: null, accounts: [] })
+  }
+})
 
 async function resolveWslAccountDistro(wslDistro: string | null | undefined): Promise<string> {
   if (process.platform !== 'win32') {
@@ -60,7 +100,11 @@ export async function getAntigravityAccountService(
   }
   service ??= createService(
     createAntigravityHostCredentialBackend(getAppEnvironment().getPath('home')),
-    getAntigravityAccountVaultPath()
+    getAntigravityAccountVaultPath(),
+    // Windows launches aren't gated (native-account-launch.ts), so nothing restores there.
+    process.platform === 'win32'
+      ? {}
+      : { launchRestore: { signInHoldsLogin: antigravitySignInHoldsNativeLogin } }
   )
   return service
 }
